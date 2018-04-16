@@ -33,6 +33,8 @@ public class ImplementsValidator extends Validator {
   public static final String STATIC_INITIALIZER_METHOD_NAME = "__staticInitializer__";
   public static final String CONSTRUCTOR_METHOD_NAME = "__constructor__";
 
+  private static final SdkStore sdkStore = new SdkStore();
+
   private final ProcessingEnvironment env;
 
   public ImplementsValidator(RobolectricModel model, ProcessingEnvironment env) {
@@ -54,16 +56,6 @@ public class ImplementsValidator extends Validator {
 
   @Override
   public Void visitType(TypeElement elem, Element parent) {
-    for (Element memberElement : ElementFilter.methodsIn(elem.getEnclosedElements())) {
-      String methodName = memberElement.getSimpleName().toString();
-      if (methodName.equals("__constructor__") || methodName.equals("__staticInitializer__")) {
-        Implementation implementation = memberElement.getAnnotation(Implementation.class);
-        if (implementation == null) {
-          messager.printMessage(Kind.ERROR, "Shadow methods must be annotated @Implementation", memberElement);
-        }
-      }
-    }
-
     captureJavadoc(elem);
 
     // inner class shadows must be static
@@ -73,16 +65,18 @@ public class ImplementsValidator extends Validator {
       error("inner shadow classes must be static");
     }
 
-    validateShadowMethods(elem);
-
     // Don't import nested classes because some of them have the same name.
     AnnotationMirror am = getCurrentAnnotation();
     AnnotationValue av = RobolectricModel.getAnnotationValue(am, "value");
     AnnotationValue cv = RobolectricModel.getAnnotationValue(am, "className");
-    AnnotationValue maxSdk = RobolectricModel.getAnnotationValue(am, "maxSdk");
+
+    AnnotationValue minSdkVal = RobolectricModel.getAnnotationValue(am, "minSdk");
+    int minSdk = minSdkVal == null ? -1 : RobolectricModel.intVisitor.visit(minSdkVal);
+    AnnotationValue maxSdkVal = RobolectricModel.getAnnotationValue(am, "maxSdk");
+    int maxSdk = maxSdkVal == null ? -1 : RobolectricModel.intVisitor.visit(maxSdkVal);
 
     // This shadow doesn't apply to the current SDK. todo: check each SDK.
-    if (maxSdk != null && RobolectricModel.intVisitor.visit(maxSdk) < MAX_SUPPORTED_ANDROID_SDK) {
+    if (maxSdk != -1 && maxSdk < MAX_SUPPORTED_ANDROID_SDK) {
       String sdkClassName;
       if (av == null) {
         sdkClassName = RobolectricModel.classNameVisitor.visit(cv).replace('$', '.');
@@ -92,12 +86,7 @@ public class ImplementsValidator extends Validator {
 
       // there's no such type at the current SDK level, so just use strings...
       // getQualifiedName() uses Outer.Inner and we want Outer$Inner, so:
-      StringBuilder name = new StringBuilder();
-      while (elem.getEnclosingElement().getKind() == ElementKind.CLASS) {
-        name.insert(0, "$" + elem.getSimpleName().toString());
-        elem = (TypeElement) elem.getEnclosingElement();
-      }
-      name.insert(0, elem.getQualifiedName());
+      String name = getClassFQName(elem);
       model.addExtraShadow(sdkClassName, name.toString());
       return null;
     }
@@ -154,13 +143,30 @@ public class ImplementsValidator extends Validator {
       messager.printMessage(Kind.ERROR, message, elem);
       return null;
     }
+
+    validateShadowMethods(type, elem, minSdk, maxSdk);
+
     model.addShadowType(elem, type);
     return null;
   }
 
-  private void validateShadowMethods(TypeElement elem) {
-    for (Element memberElement : ElementFilter.methodsIn(elem.getEnclosedElements())) {
+  static String getClassFQName(TypeElement elem) {
+    StringBuilder name = new StringBuilder();
+    while (elem.getEnclosingElement().getKind() == ElementKind.CLASS) {
+      name.insert(0, "$" + elem.getSimpleName().toString());
+      elem = (TypeElement) elem.getEnclosingElement();
+    }
+    name.insert(0, elem.getQualifiedName());
+    return name.toString();
+  }
+
+  private void validateShadowMethods(TypeElement sdkClassElem, TypeElement shadowClassElem,
+                                     int classMinSdk, int classMaxSdk) {
+    for (Element memberElement : ElementFilter.methodsIn(shadowClassElem.getEnclosedElements())) {
       ExecutableElement methodElement = (ExecutableElement) memberElement;
+
+      verifySdkMethod(sdkClassElem, methodElement, classMinSdk, classMaxSdk);
+
       Implementation implementation = memberElement.getAnnotation(Implementation.class);
 
       String methodName = methodElement.getSimpleName().toString();
@@ -170,6 +176,16 @@ public class ImplementsValidator extends Validator {
           messager.printMessage(
               Kind.ERROR, "Shadow methods must be annotated @Implementation", methodElement);
         }
+      }
+    }
+  }
+
+  private void verifySdkMethod(TypeElement sdkClassElem, ExecutableElement methodElement,
+                               int classMinSdk, int classMaxSdk) {
+    Implementation implementation = methodElement.getAnnotation(Implementation.class);
+    if (implementation != null) {
+      for (SdkStore.Sdk sdk : sdkStore.sdksMatching(implementation, classMinSdk, classMaxSdk)) {
+        sdk.verifyMethod(messager, sdkClassElem, methodElement);
       }
     }
   }
