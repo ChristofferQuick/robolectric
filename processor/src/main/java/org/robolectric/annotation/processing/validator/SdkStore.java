@@ -148,7 +148,6 @@ class SdkStore {
       String classFileName = name.replace('.', '/') + ".class";
       ZipEntry entry = jarFile.getEntry(classFileName);
       if (entry == null) {
-        System.out.println(classFileName + " entry null in " + path);
         return null;
       }
       InputStream inputStream;
