@@ -3,7 +3,13 @@ package org.robolectric.annotation.processing.validator;
 import com.sun.source.tree.ImportTree;
 import com.sun.source.util.Trees;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.Set;
+import java.util.TreeSet;
+import javax.annotation.processing.Messager;
 import javax.annotation.processing.ProcessingEnvironment;
 import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.AnnotationValue;
@@ -184,8 +190,17 @@ public class ImplementsValidator extends Validator {
                                int classMinSdk, int classMaxSdk) {
     Implementation implementation = methodElement.getAnnotation(Implementation.class);
     if (implementation != null) {
+      Problems problems = new Problems();
+
       for (SdkStore.Sdk sdk : sdkStore.sdksMatching(implementation, classMinSdk, classMaxSdk)) {
-        sdk.verifyMethod(messager, sdkClassElem, methodElement);
+        String problem = sdk.verifyMethod(sdkClassElem, methodElement);
+        if (problem != null) {
+          problems.add(problem, sdk.sdkInt);
+        }
+      }
+
+      if (problems.any()) {
+        problems.recount(messager, methodElement);
       }
     }
   }
@@ -241,5 +256,57 @@ public class ImplementsValidator extends Validator {
 
   private Integer sdkOrNull(int sdk) {
     return sdk == -1 ? null : sdk;
+  }
+
+  private static class Problems {
+    Map<String, Set<Integer>> problems = new HashMap<>();
+
+    void add(String problem, int sdkInt) {
+      Set<Integer> sdks = problems.get(problem);
+      if (sdks == null) {
+        problems.put(problem, sdks = new TreeSet<>());
+      }
+      sdks.add(sdkInt);
+    }
+
+    boolean any() {
+      return !problems.isEmpty();
+    }
+
+    void recount(Messager messager, Element element) {
+      for (Entry<String, Set<Integer>> e : problems.entrySet()) {
+        String problem = e.getKey();
+        Set<Integer> sdks = e.getValue();
+
+        StringBuilder buf = new StringBuilder();
+        buf.append(problem)
+            .append(" for ")
+            .append(sdks.size() == 1 ? "SDK " : "SDKs ");
+
+        Integer previousSdk = null;
+        Integer lastSdk = null;
+        for (Integer sdk : sdks) {
+          if (previousSdk == null) {
+            buf.append(sdk);
+          } else {
+            if (previousSdk != sdk - 1) {
+              buf.append("-").append(previousSdk);
+              buf.append("/").append(sdk);
+              lastSdk = null;
+            } else {
+              lastSdk = sdk;
+            }
+          }
+
+          previousSdk = sdk;
+        }
+
+        if (lastSdk != null) {
+          buf.append("-").append(lastSdk);
+        }
+
+        messager.printMessage(Kind.ERROR, buf.toString(), element);
+      }
+    }
   }
 }

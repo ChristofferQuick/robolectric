@@ -87,37 +87,33 @@ class SdkStore {
       this.path = path;
     }
 
-    public void verifyMethod(Messager messager, TypeElement sdkClassElem, ExecutableElement methodElement) {
+    public String verifyMethod(TypeElement sdkClassElem, ExecutableElement methodElement) {
       String className = getClassFQName(sdkClassElem);
       ClassInfo classInfo = getClassInfo(className);
 
       if (classInfo == null) {
-        messager.printMessage(Diagnostic.Kind.ERROR,
-            "No such class " + className + " in SDK level " + sdkInt, methodElement);
+        return "No such class " + className;
       } else {
         MethodExtraInfo sdkMethod = classInfo.findMethod(methodElement);
         if (sdkMethod == null) {
-          messager.printMessage(Diagnostic.Kind.ERROR,
-              "No such method " + className + "." + methodElement.getSimpleName()
-                  + " in SDK level " + sdkInt, methodElement);
+          return "No such method " + className + "." + methodElement.getSimpleName();
         } else {
           MethodExtraInfo implMethod = new MethodExtraInfo(methodElement);
           if (sdkMethod.equals(implMethod)) {
             if (implMethod.isStatic != sdkMethod.isStatic) {
-              messager.printMessage(Diagnostic.Kind.ERROR,
-                  "@Implementation for " + methodElement.getSimpleName() +
-                      " is " + (implMethod.isStatic ? "static" : "not static") +
-                      " unlike the method in SDK level " + sdkInt, methodElement);
+              return "@Implementation for " + methodElement.getSimpleName() +
+                  " is " + (implMethod.isStatic ? "static" : "not static") +
+                  " unlike the SDK method";
             }
             if (!implMethod.returnType.equals(sdkMethod.returnType)) {
-              messager.printMessage(Diagnostic.Kind.ERROR,
-                  "@Implementation for " + methodElement.getSimpleName() +
-                      " has a return type of " + implMethod.returnType +
-                      ", not " + sdkMethod.returnType + " as in SDK level " + sdkInt, methodElement);
+              return "@Implementation for " + methodElement.getSimpleName() +
+                  " has a return type of " + implMethod.returnType +
+                  ", not " + sdkMethod.returnType + " as in the SDK method";
             }
           }
         }
       }
+      return null;
     }
 
     synchronized private ClassInfo getClassInfo(String name) {
@@ -160,7 +156,8 @@ class SdkStore {
       try {
         ClassReader classReader = new ClassReader(inputStream);
         ClassNode classNode = new ClassNode();
-        classReader.accept(classNode, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+        classReader.accept(classNode,
+            ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
         return classNode;
       } catch (IOException e) {
         throw new RuntimeException("failed to load " + classFileName + " in " + path, e);
